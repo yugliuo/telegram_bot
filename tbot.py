@@ -47,7 +47,9 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "2️⃣ أرسله هنا مباشرة\n"
         "3️⃣ اختر الجودة أو MP3\n"
         "4️⃣ انتظر حتى يصلك الملف\n\n"
-        "📦 *الملفات ترسل مضغوطة للحفاظ على الجودة*\n\n"
+        "📦 *الفرق بين المضغوط وغير المضغوط:*\n"
+        "• مضغوط = يحافظ على الجودة الأصلية كاملاً، يُرسل كملف\n"
+        "• غير مضغوط = يُشغَّل مباشرة في المحادثة، لكن تيليجرام يقلل جودته\n\n"
         "⚠️ *ملاحظات:*\n"
         "• بعض المنصات تتطلب أن يكون الحساب عاماً\n"
         "• الفيديوهات الطويلة قد تأخذ وقتاً أكثر\n"
@@ -66,10 +68,8 @@ async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # حفظ الرابط في context
     context.user_data["url"] = url
 
-    # أزرار اختيار الجودة
     keyboard = [
         [
             InlineKeyboardButton("🎬 أفضل جودة", callback_data="quality_best"),
@@ -79,11 +79,15 @@ async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE):
             InlineKeyboardButton("💾 أقل جودة", callback_data="quality_low"),
             InlineKeyboardButton("🎵 صوت فقط MP3", callback_data="quality_mp3"),
         ],
+        [
+            InlineKeyboardButton("📦 مضغوط (جودة أصلية)", callback_data="quality_best_doc"),
+            InlineKeyboardButton("📤 غير مضغوط", callback_data="quality_best_vid"),
+        ],
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
     await update.message.reply_text(
-        "✅ *تم التعرف على الرابط!*\n\nاختر جودة التحميل:",
+        "✅ *تم التعرف على الرابط!*\n\nاختر جودة التحميل وطريقة الإرسال:",
         reply_markup=reply_markup,
         parse_mode="Markdown"
     )
@@ -100,10 +104,12 @@ async def handle_quality(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     choice = query.data
     quality_labels = {
-        "quality_best":   "أفضل جودة 🎬",
-        "quality_medium": "جودة متوسطة 📱",
-        "quality_low":    "أقل جودة 💾",
-        "quality_mp3":    "صوت فقط MP3 🎵",
+        "quality_best":     "أفضل جودة 🎬",
+        "quality_medium":   "جودة متوسطة 📱",
+        "quality_low":      "أقل جودة 💾",
+        "quality_mp3":      "صوت فقط MP3 🎵",
+        "quality_best_doc": "مضغوط - جودة أصلية 📦",
+        "quality_best_vid": "غير مضغوط 📤",
     }
     label = quality_labels.get(choice, "")
 
@@ -113,7 +119,6 @@ async def handle_quality(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode="Markdown"
     )
 
-    # إعداد yt-dlp
     chat_id = query.message.chat_id
     msg_id = progress_msg.message_id
     bot = context.bot
@@ -140,7 +145,7 @@ async def handle_quality(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     )
 
     # إعدادات الجودة
-    if choice == "quality_best":
+    if choice in ("quality_best", "quality_best_doc", "quality_best_vid"):
         fmt = "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best"
     elif choice == "quality_medium":
         fmt = "bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/best[height<=720][ext=mp4]/best"
@@ -164,7 +169,6 @@ async def handle_quality(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "preferredcodec": "mp3",
             "preferredquality": "192",
         }]
-        ydl_opts["outtmpl"] = os.path.join(DOWNLOAD_DIR, "%(id)s.%(ext)s")
 
     try:
         loop = asyncio.get_event_loop()
@@ -176,7 +180,6 @@ async def handle_quality(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     path = os.path.join(DOWNLOAD_DIR, f"{info['id']}.mp3")
                 else:
                     path = ydl.prepare_filename(info)
-                    # إذا الملف mp4 مدمج
                     if not os.path.exists(path):
                         path = path.rsplit(".", 1)[0] + ".mp4"
                 return path
@@ -190,7 +193,6 @@ async def handle_quality(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode="Markdown"
         )
 
-        # إرسال الملف
         file_size = os.path.getsize(file_path)
 
         if file_size > 50 * 1024 * 1024:
@@ -207,17 +209,27 @@ async def handle_quality(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     caption="🎵 تم التحميل بواسطة البوت"
                 )
             await bot.delete_message(chat_id=chat_id, message_id=msg_id)
+        elif choice == "quality_best_vid":
+            # إرسال كفيديو مباشر (غير مضغوط - تيليجرام يعالجه)
+            with open(file_path, "rb") as f:
+                await bot.send_video(
+                    chat_id=chat_id,
+                    video=f,
+                    caption="📤 تم التحميل بواسطة البوت",
+                    supports_streaming=True
+                )
+            await bot.delete_message(chat_id=chat_id, message_id=msg_id)
         else:
+            # إرسال كمستند مضغوط يحافظ على الجودة
             with open(file_path, "rb") as f:
                 await bot.send_document(
                     chat_id=chat_id,
                     document=f,
-                    caption="📥 تم التحميل بواسطة البوت",
+                    caption="📦 تم التحميل بواسطة البوت",
                     filename=os.path.basename(file_path)
                 )
             await bot.delete_message(chat_id=chat_id, message_id=msg_id)
 
-        # حذف الملف بعد الإرسال
         os.remove(file_path)
 
     except Exception as e:
